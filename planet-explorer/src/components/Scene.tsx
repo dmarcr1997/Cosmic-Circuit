@@ -81,7 +81,15 @@ const applyTerrain = (planet: Mesh, roughness: number, seed: number) => {
   const indices = planet.getIndices()!; // Needed to compute normals
   const normals = new Float32Array(positions.length); // Placeholder for recalculated normals
 
-  const scaling = 30; // Adjust this for visible noise patterns
+  // const scaling = 30; // Adjust this for visible noise patterns V1
+  //V2
+  // const scaling = 10;
+  // const flattenFactor = 0.5;
+
+  //V3
+  const scaling = 5; // Lower scaling for broader noise features
+  const plateauThreshold = 0.4; // Controls the flatness of certain areas
+  const amplitude = 0.2; // Maximum displacement amplitude for subtle variations
 
   for (let i = 0; i < positions.length; i += 3) {
     const x = positions[i];
@@ -92,11 +100,26 @@ const applyTerrain = (planet: Mesh, roughness: number, seed: number) => {
     const ny = y / length;
     const nz = z / length;
 
-    // Generate noise value
-    const noiseValue = noise.perlin3(nx * scaling, ny * scaling, nz * scaling);
+    // Generate noise value V1
+    // const noiseValue = noise.perlin3(nx * scaling, ny * scaling, nz * scaling);
 
-    // Apply displacement
-    const displacement = 1 + noiseValue * roughness; 
+    // Apply displacement V1
+    // const displacement = 1 + noiseValue * roughness; 
+    //V2
+    // const lowFreqNoise = noise.perlin3(nx * scaling, ny * scaling, nz * scaling);
+    // const highFreqNoise = noise.perlin3(nx * scaling * 2, ny * scaling * 2, nz * scaling * 2);
+
+    // const combinedNoise = lowFreqNoise * 0.8 + highFreqNoise * 0.2;
+    // const displacement = 1 + combinedNoise * roughness * Math.pow(1 - combinedNoise, flattenFactor);
+
+    //V3
+    const baseNoise = noise.perlin3(nx * scaling, ny * scaling, nz * scaling);
+    const refinedNoise = Math.max(-1, Math.min(1, baseNoise * 0.6));
+    const elevationWeight = Math.pow(1 - Math.abs(refinedNoise), plateauThreshold);
+
+    // Final displacement with smoothing
+    const displacement = 1 + refinedNoise * roughness * amplitude * elevationWeight;
+
     positions[i] = nx * length * displacement;
     positions[i + 1] = ny * length * displacement;
     positions[i + 2] = nz * length * displacement;
