@@ -10,7 +10,9 @@ import {
   StandardMaterial,
   Color3,
   Mesh,
+  VertexData,
 } from "@babylonjs/core";
+import Noise from "noisejs";
 
 interface SceneProps {
   canvas: RefObject<HTMLCanvasElement>;
@@ -45,29 +47,12 @@ export const Scene = ({ canvas, planetId }: SceneProps) => {
     const light = new HemisphericLight("light", new Vector3(0, 1, 0), scene);
     light.intensity = 0.7;
 
-    // Create or update planet based on planetId
-    const planet = MeshBuilder.CreateSphere(
-      "planet",
-      { diameter: 4, segments: 32 },
-      scene
-    );
-
-    // Basic material for the planet
-    const planetMaterial = new StandardMaterial("planetMaterial", scene);
-    planetMaterial.diffuseColor = new Color3(0.4, 0.6, 0.8);
-    planetMaterial.specularColor = new Color3(0.2, 0.2, 0.2);
-    planet.material = planetMaterial;
-
-    // Add rotation animation
-    scene.registerBeforeRender(() => {
-      planet.rotate(Vector3.Up(), 0.002);
-    });
 
     // If we have a planetId, update the planet appearance
     if (planetId !== null) {
       // fetch planet data from planetNFT contract
       // and use to update planet's appearance
-      updatePlanetAppearance(planet, planetId);
+      createPlanet(planetId, scene);
     }
 
     // Start the render loop
@@ -90,12 +75,110 @@ export const Scene = ({ canvas, planetId }: SceneProps) => {
   return null;
 };
 
-const updatePlanetAppearance = async (planet: Mesh, planetId: number) => {
-  const features = generatePlanetFeatures(planetId);
+const applyTerrain = (planet: Mesh, roughness: number, seed: number) => {
+  const noise = new Noise.Noise(seed);
+  const positions = planet.getVerticesData("position")!;
+  const indices = planet.getIndices()!; // Needed to compute normals
+  const normals = new Float32Array(positions.length); // Placeholder for recalculated normals
 
-  const planetMaterial = planet.material as StandardMaterial;
+  const scaling = 30; // Adjust this for visible noise patterns
 
-  planetMaterial.diffuseColor = new Color3(features.color.r, features.color.g, features.color.b);
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i];
+    const y = positions[i + 1];
+    const z = positions[i + 2];
+    const length = Math.sqrt(x * x + y * y + z * z);
+    const nx = x / length;
+    const ny = y / length;
+    const nz = z / length;
+
+    // Generate noise value
+    const noiseValue = noise.perlin3(nx * scaling, ny * scaling, nz * scaling);
+
+    // Apply displacement
+    const displacement = 1 + noiseValue * roughness; 
+    positions[i] = nx * length * displacement;
+    positions[i + 1] = ny * length * displacement;
+    positions[i + 2] = nz * length * displacement;
+  }
+
+  // Compute new normals based on the updated positions
+  VertexData.ComputeNormals(positions, indices, normals);
+
+  const vertexData = new VertexData();
+  vertexData.positions = positions;
+  vertexData.indices = indices;
+  vertexData.normals = normals;
+  
+  // Apply it to the mesh
+  vertexData.applyToMesh(planet, true);
+
+  planet.forceSharedVertices();
+  planet.refreshBoundingInfo();
+};
+
+
+const createAtmosphere = (radius: number, scene: BabylonScene) => {
+  const atmosphere = MeshBuilder.CreateSphere(
+    "atmosphere",
+    {diameter: radius * 3, segments: 32 },
+    scene
+  )
+
+  const atmosphereMaterial = new StandardMaterial("atmosphereMaterial", scene);
+  atmosphereMaterial.emissiveColor = new Color3(0.5, 0.5, 1.0);
+  atmosphereMaterial.alpha = 0.3; // Transparency
+  atmosphere.material = atmosphereMaterial;
+}
+
+const createRings = (scene: BabylonScene, radius: number) => {
+  const ring = MeshBuilder.CreateTorus(
+    "ring",
+    { diameter: radius * 3.5, thickness: 0.05, tessellation: 64 },
+    scene
+  );
+
+  const ringMaterial = new StandardMaterial("ringMaterial", scene);
+  ringMaterial.diffuseColor = new Color3(0.8, 0.8, 0.5);
+  ringMaterial.alpha = 0.7; // Semi-transparent rings
+  ring.material = ringMaterial;
+
+  ring.rotation.x = Math.PI / 2; // Align with the planet's equator
+};
+
+const createPlanet = async (planetId: number, scene: BabylonScene) => {
+    const features = generatePlanetFeatures(planetId);
+    // Create or update planet based on planetId
+    const planet = MeshBuilder.CreateSphere(
+      "planet",
+      { diameter: features.radius * 2, segments: 64 },
+      scene
+    );
+
+    // Basic material for the planet
+    const basePlanetMaterial = new StandardMaterial("planetMaterial", scene);
+    basePlanetMaterial.diffuseColor = new Color3(0.4, 0.6, 0.8);
+    basePlanetMaterial.specularColor = new Color3(0.2, 0.2, 0.2);
+    planet.material = basePlanetMaterial;
+
+    // Add rotation animation
+    scene.registerBeforeRender(() => {
+      planet.rotate(Vector3.Up(), 0.002);
+    });
+
+
+    const planetMaterial = planet.material as StandardMaterial;
+
+    planetMaterial.diffuseColor = new Color3(features.color.r, features.color.g, features.color.b);
+    applyTerrain(planet, features.roughness, planetId);
+    if (features.atmosphere) {
+      createAtmosphere(features.radius, scene);
+    }
+
+    // Add rings
+    if (features.rings) {
+      createRings(scene, features.radius);
+    }
 };
 
 const generatePlanetFeatures = (seed: number) => {
@@ -106,7 +189,7 @@ const generatePlanetFeatures = (seed: number) => {
   };
 
   return {
-    radius: random(2, 5),
+    radius: random(1, 4),
     roughness: random(0.1, 0.5),
     atmosphere: random(0, 1) > 0.5,
     rings: random(0, 1) > 0.8,
